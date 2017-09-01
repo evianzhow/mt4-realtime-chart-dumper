@@ -230,6 +230,7 @@ int saveHistory(string symbol)
       else
         IF_DEBUG_THEN Alert("Error - Failed to execute statement: ", db.getErrorMsg());
     }
+    touchBlankFile(symbol, periods[i])
   }
   return (GetLastError());
 }
@@ -304,6 +305,18 @@ int saveHistoryIncrement(string symbol)
       else
         IF_DEBUG_THEN Alert("Error - Failed to execute statement: ", db.getErrorMsg());
     }
+    touchBlankFile(symbol, periods[i])
   }
   return (GetLastError());
+}
+
+//+------------------------------------------------------------------+
+//| touch blank file                                                 |
+//+------------------------------------------------------------------+
+int touchBlankFile(string symbol, int period)
+{
+  int handle = FileOpen(fileNameFromSymbolAndPeriod(symbol, period), FILE_CSV|FILE_WRITE, ',');
+  if (handle <= 0) return (INIT_FAILED);
+  FileWrite(handle, "")
+  FileClose(handle)
 }
