@@ -6,11 +6,12 @@
 #property copyright   "Copyright 2017, Evian Zhow"
 #property link        "blog.evianzhow.com"
 #property description "This EA automatically exports selected instrument candle"
-#property description "charts w/ different periods as multiple CSV files to "
+#property description "charts w/ different periods as multiple database SQL queries to "
 #property description "MQL4\\Files folder."
 
 #include "Helper_Functions.mq4"
 #include <stdlib.mqh>
+#include <SQLite3/Statement.mqh>
 
 //--- input parameters
 extern string    TimeZoneOffsetFromUTC="+8";
@@ -18,8 +19,10 @@ extern string    Instrument="XAUUSD";
 extern bool      Debug=false;
 
 string name;
+SQLite3 *db;
 
-int periods[] = { PERIOD_M1, PERIOD_M5, PERIOD_M15, PERIOD_H1, PERIOD_H4, PERIOD_D1 };
+// int periods[] = { PERIOD_M1, PERIOD_M5, PERIOD_M15, PERIOD_H1, PERIOD_H4, PERIOD_D1 };
+int periods[] = { PERIOD_H1, PERIOD_D1 };
 
 //+------------------------------------------------------------------+
 //| configure max bars to be read                                    |
@@ -59,9 +62,57 @@ int OnInit()
     return (INIT_FAILED);
   }
 
+  //--- optional but recommended
+  SQLite3::initialize();
+
+  //--- ensure the dll and the lib is of the same version
+  Print(SQLite3::getVersionNumber(), " = ", SQLITE_VERSION_NUMBER);
+  Print(SQLite3::getVersion(), " = ", SQLITE_VERSION);
+  Print(SQLite3::getSourceId(), " = ", SQLITE_SOURCE_ID);
+
+  //--- create an empty db
+  #ifdef __MQL5__
+    string filesPath = TerminalInfoString(TERMINAL_DATA_PATH) + "\\MQL5\\Files";
+  #else
+    string filesPath = TerminalInfoString(TERMINAL_DATA_PATH) + "\\MQL4\\Files";
+  #endif
+  string dbPath = filesPath + "\\data.db";
+
+  db = new SQLite3(dbPath, SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE);
+
+  if (!db.isValid()) return (INIT_FAILED);
+  string sql = "CREATE TABLE IF NOT EXISTS `candles` ("
+                 "`Symbol`  TEXT NOT NULL,"
+                 "`Timeframe` TEXT NOT NULL,"
+                 "`Time`  INTEGER NOT NULL,"
+                 "`Open`  REAL NOT NULL,"
+                 "`High`  REAL NOT NULL,"
+                 "`Low` REAL NOT NULL,"
+                 "`Close` REAL NOT NULL,"
+                 "PRIMARY KEY(`Symbol`,`Timeframe`,`Time`)"
+               ");";
+
+  if (!Statement::isComplete(sql)) return (INIT_FAILED);
+  Statement s(db, sql);
+  if (!s.isValid()) {
+    Alert("Error - Failed to initialize sqlite db. " + db.getErrorMsg());
+    return (INIT_FAILED);
+  }
+  int r = s.step();
+  if (r == SQLITE_OK || r == SQLITE_DONE)
+    Print("Notice - Initialize sqlite db finished.");
+  else
+    Alert("Error - Failed to execute statement: ", db.getErrorMsg());
+
   err = checkHistoryAvailability();
   if (err != 0) {
     Alert("Error " + err + " - Unable to update local history files!. Please re-run the script later.");
+    return (INIT_FAILED);
+  }
+
+  err = saveHistory(Instrument);
+  if (err != 0) {
+    Alert("Error " + err + " - Initial candlesticks write failed!");
     return (INIT_FAILED);
   }
 
@@ -76,6 +127,11 @@ void OnDeinit(const int reason)
   if (reason == REASON_INITFAILED) {
     IF_DEBUG_THEN Alert("OnInit failed!");
   }
+
+  delete db;
+  //--- optional but recommended
+  SQLite3::shutdown();
+
   return;
 }
 
@@ -88,7 +144,7 @@ void OnTick()
     return;
   }
 
-  int err = saveHistory(Instrument);
+  int err = saveHistoryIncrement(Instrument);
   if (err != 0) {
     IF_DEBUG_THEN Alert("Error " + err + " - Saving failed!");
   }
@@ -104,7 +160,7 @@ int checkHistoryAvailability() {
   int periodsCount = ArraySize(periods);
 
   for (int i = 0; i < periodsCount; i++) {
-    int pause = 5;
+    int pause = 3;
 
     while (true) {
       int getBars = iBars(Instrument, periods[i]);
@@ -138,24 +194,116 @@ int saveHistory(string symbol)
   for (int i = 0; i < periodsCount; i++) {
     int availableBars = iBars(symbol, periods[i]);
 
-    int handle = FileOpen(fileNameFromSymbolAndPeriod(symbol, periods[i]), FILE_CSV|FILE_WRITE, ',');
+    if (!db.isValid()) return (INIT_FAILED);
 
-    FileWrite(handle, "date", "open", "high", "low", "close");
     for (int k = 0; k < availableBars; k++) {
-      if (handle <= 0) continue;
-
       O = iOpen(symbol, periods[i], k);
       H = iHigh(symbol, periods[i], k);      
       L = iLow(symbol, periods[i], k);      
       C = iClose(symbol, periods[i], k);               
       T = iTime(symbol, periods[i], k);
 
-      string date = TimeToStr(T, TIME_DATE|TIME_SECONDS);
-      StringReplace(date, " ", "T"); StringReplace(date, ".", "-");
-      date += timeZoneISOStandard(TimeZoneOffsetFromUTC); // Exported as ISO 8601 Standard
-      FileWrite(handle, date, O, H, L, C);
+      string sql = "INSERT OR REPLACE INTO `candles`(Symbol, Timeframe, "
+                   "Time, Open, High, Low, Close) VALUES ('" +
+                   symbol + "','" +
+                   shortPeriodDescriptionFromConstant(periods[i]) + "'," + 
+                   IntegerToString(T) + "," +
+                   DoubleToString(O, Digits) + "," +
+                   DoubleToString(H, Digits) + "," +
+                   DoubleToString(L, Digits) + "," +
+                   DoubleToString(C, Digits) + ");";
+      if (!Statement::isComplete(sql)) {
+        IF_DEBUG_THEN Alert("Error - SQL Statement is not complete!");
+        return (INIT_FAILED);
+      }
+      Statement s(db, sql);
+      if (!s.isValid()) {
+        IF_DEBUG_THEN Alert("Error - SQL Statement is not valid!");
+        return (INIT_FAILED);
+      }
+
+      int r = s.step();
+      if (r == SQLITE_OK)
+        IF_DEBUG_THEN Print("Notice - Step finished.");
+      else if (r == SQLITE_DONE)
+        IF_DEBUG_THEN Print("Notice - SQL query succeeded.");
+      else
+        IF_DEBUG_THEN Alert("Error - Failed to execute statement: ", db.getErrorMsg());
     }
-    FileClose(handle);
+  }
+  return (GetLastError());
+}
+
+//+------------------------------------------------------------------+
+//| save history incrementally                                       |
+//+------------------------------------------------------------------+
+int saveHistoryIncrement(string symbol)
+{
+  double O, H, L, C, T;
+  int periodsCount = ArraySize(periods);
+  for (int i = 0; i < periodsCount; i++) {
+    if (!db.isValid()) return (INIT_FAILED);
+    int k = 0;
+    while (1) {
+      O = iOpen(symbol, periods[i], k);
+      H = iHigh(symbol, periods[i], k);      
+      L = iLow(symbol, periods[i], k);      
+      C = iClose(symbol, periods[i], k);               
+      T = iTime(symbol, periods[i], k);
+      k++;
+
+      string sql = "SELECT * FROM `candles` WHERE Symbol = '" + symbol + 
+                   "' and Timeframe = '" + shortPeriodDescriptionFromConstant(periods[i])
+                   + "' and Time = " + IntegerToString(T) + ";";
+      if (!Statement::isComplete(sql)) {
+        IF_DEBUG_THEN Alert("Error - SQL Statement is not complete!");
+        return (INIT_FAILED);
+      }
+      Statement s(db, sql);
+      if (!s.isValid()) {
+        IF_DEBUG_THEN Alert("Error - SQL Statement is not valid!");
+        return (INIT_FAILED);
+      }
+
+      int r = s.step();
+      if (r != SQLITE_OK && r != SQLITE_DONE && r != SQLITE_ROW) {
+        IF_DEBUG_THEN Alert("Error - Failed to execute statement: ", db.getErrorMsg());
+        return (INIT_FAILED);
+      }
+      if (s.getDataCount() > 0) {
+        // Already has this record
+        double cO, cH, cL, cC;
+        s.getColumn(3, cO); s.getColumn(4, cH); s.getColumn(5, cL); s.getColumn(6, cC);
+        if (fabs(cO - O) <= epsilon && fabs(cH - H) <= epsilon && fabs(cL - L) <= epsilon && fabs(cC - C) <= epsilon) break;
+      }
+      // Insert
+      string sql_ins = "INSERT OR REPLACE INTO `candles`(Symbol, Timeframe, "
+                       "Time, Open, High, Low, Close) VALUES ('" +
+                       symbol + "','" +
+                       shortPeriodDescriptionFromConstant(periods[i]) + "'," + 
+                       IntegerToString(T) + "," +
+                       DoubleToString(O, Digits) + "," +
+                       DoubleToString(H, Digits) + "," +
+                       DoubleToString(L, Digits) + "," +
+                       DoubleToString(C, Digits) + ");";
+      if (!Statement::isComplete(sql_ins)) {
+        IF_DEBUG_THEN Alert("Error - SQL Statement is not complete!");
+        return (INIT_FAILED);
+      }
+      Statement s_ins(db, sql_ins);
+      if (!s_ins.isValid()) {
+        IF_DEBUG_THEN Alert("Error - SQL Statement is not valid!");
+        return (INIT_FAILED);
+      }
+
+      int r_ins = s_ins.step();
+      if (r_ins == SQLITE_OK)
+        IF_DEBUG_THEN Print("Notice - Step finished.");
+      else if (r_ins == SQLITE_DONE)
+        IF_DEBUG_THEN Print("Notice - SQL query succeeded.");
+      else
+        IF_DEBUG_THEN Alert("Error - Failed to execute statement: ", db.getErrorMsg());
+    }
   }
   return (GetLastError());
 }
