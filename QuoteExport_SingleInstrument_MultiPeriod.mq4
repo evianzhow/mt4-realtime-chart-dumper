@@ -89,6 +89,7 @@ int OnInit()
                  "`High`  REAL NOT NULL,"
                  "`Low` REAL NOT NULL,"
                  "`Close` REAL NOT NULL,"
+                 "`Timezone`  TEXT DEFAULT +8,"
                  "PRIMARY KEY(`Symbol`,`Timeframe`,`Time`)"
                ");";
 
@@ -204,14 +205,15 @@ int saveHistory(string symbol)
       T = iTime(symbol, periods[i], k);
 
       string sql = "INSERT OR REPLACE INTO `candles`(Symbol, Timeframe, "
-                   "Time, Open, High, Low, Close) VALUES ('" +
+                   "Time, Open, High, Low, Close, Timezone) VALUES ('" +
                    symbol + "','" +
                    shortPeriodDescriptionFromConstant(periods[i]) + "'," + 
                    IntegerToString(T) + "," +
                    DoubleToString(O, Digits) + "," +
                    DoubleToString(H, Digits) + "," +
                    DoubleToString(L, Digits) + "," +
-                   DoubleToString(C, Digits) + ");";
+                   DoubleToString(C, Digits) + ",'" +
+                   TimeZoneOffsetFromUTC + "');";
       if (!Statement::isComplete(sql)) {
         IF_DEBUG_THEN Alert("Error - SQL Statement is not complete!");
         return (INIT_FAILED);
@@ -279,14 +281,15 @@ int saveHistoryIncrement(string symbol)
       }
       // Insert
       string sql_ins = "INSERT OR REPLACE INTO `candles`(Symbol, Timeframe, "
-                       "Time, Open, High, Low, Close) VALUES ('" +
+                       "Time, Open, High, Low, Close, Timezone) VALUES ('" +
                        symbol + "','" +
                        shortPeriodDescriptionFromConstant(periods[i]) + "'," + 
                        IntegerToString(T) + "," +
                        DoubleToString(O, Digits) + "," +
                        DoubleToString(H, Digits) + "," +
                        DoubleToString(L, Digits) + "," +
-                       DoubleToString(C, Digits) + ");";
+                       DoubleToString(C, Digits) + ",'" +
+                       TimeZoneOffsetFromUTC + "');";
       if (!Statement::isComplete(sql_ins)) {
         IF_DEBUG_THEN Alert("Error - SQL Statement is not complete!");
         return (INIT_FAILED);
