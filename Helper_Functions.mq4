@@ -177,3 +177,15 @@ int periodFromFileName(string filename)
     return PERIOD_CURRENT;
   }
 }
+
+//+------------------------------------------------------------------+
+//| touch blank file                                                 |
+//+------------------------------------------------------------------+
+int touchBlankFile(string symbol, int period)
+{
+  int handle = FileOpen(fileNameFromSymbolAndPeriod(symbol, period), FILE_CSV|FILE_WRITE, ',');
+  if (handle <= 0) return (INIT_FAILED);
+  FileWrite(handle, "");
+  FileClose(handle);
+  return (GetLastError());
+}

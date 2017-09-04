@@ -81,7 +81,16 @@ int OnInit()
   db = new SQLite3(dbPath, SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE);
 
   if (!db.isValid()) return (INIT_FAILED);
-  string sql = "CREATE TABLE IF NOT EXISTS `candles` ("
+
+  err = checkHistoryAvailability();
+  if (err != 0) {
+    Alert("Error " + err + " - Unable to update local history files!. Please re-run the script later.");
+    return (INIT_FAILED);
+  }
+
+  if (!doCheckTableExists(db, "candles")) {
+    // First Launch
+    string sql = "CREATE TABLE IF NOT EXISTS `candles` ("
                  "`Symbol`  TEXT NOT NULL,"
                  "`Timeframe` TEXT NOT NULL,"
                  "`Time`  INTEGER NOT NULL,"
@@ -93,28 +102,23 @@ int OnInit()
                  "PRIMARY KEY(`Symbol`,`Timeframe`,`Time`)"
                ");";
 
-  if (!Statement::isComplete(sql)) return (INIT_FAILED);
-  Statement s(db, sql);
-  if (!s.isValid()) {
-    Alert("Error - Failed to initialize sqlite db. " + db.getErrorMsg());
-    return (INIT_FAILED);
-  }
-  int r = s.step();
-  if (r == SQLITE_OK || r == SQLITE_DONE)
-    Print("Notice - Initialize sqlite db finished.");
-  else
-    Alert("Error - Failed to execute statement: ", db.getErrorMsg());
+    if (!Statement::isComplete(sql)) return (INIT_FAILED);
+    Statement s(db, sql);
+    if (!s.isValid()) {
+      Alert("Error - Failed to initialize sqlite db. " + db.getErrorMsg());
+      return (INIT_FAILED);
+    }
+    int r = s.step();
+    if (r == SQLITE_OK || r == SQLITE_DONE)
+      Print("Notice - Initialize sqlite db finished.");
+    else
+      Alert("Error - Failed to execute statement: ", db.getErrorMsg());
 
-  err = checkHistoryAvailability();
-  if (err != 0) {
-    Alert("Error " + err + " - Unable to update local history files!. Please re-run the script later.");
-    return (INIT_FAILED);
-  }
-
-  err = saveHistory(Instrument);
-  if (err != 0) {
-    Alert("Error " + err + " - Initial candlesticks write failed!");
-    return (INIT_FAILED);
+    err = saveHistory(Instrument);
+    if (err != 0) {
+      Alert("Error " + err + " - Initial candlesticks write failed!");
+      return (INIT_FAILED);
+    }
   }
 
   return(INIT_SUCCEEDED);
@@ -204,33 +208,7 @@ int saveHistory(string symbol)
       C = iClose(symbol, periods[i], k);               
       T = iTime(symbol, periods[i], k);
 
-      string sql = "INSERT OR REPLACE INTO `candles`(Symbol, Timeframe, "
-                   "Time, Open, High, Low, Close, Timezone) VALUES ('" +
-                   symbol + "','" +
-                   shortPeriodDescriptionFromConstant(periods[i]) + "'," + 
-                   IntegerToString(T) + "," +
-                   DoubleToString(O, Digits) + "," +
-                   DoubleToString(H, Digits) + "," +
-                   DoubleToString(L, Digits) + "," +
-                   DoubleToString(C, Digits) + ",'" +
-                   TimeZoneOffsetFromUTC + "');";
-      if (!Statement::isComplete(sql)) {
-        IF_DEBUG_THEN Alert("Error - SQL Statement is not complete!");
-        return (INIT_FAILED);
-      }
-      Statement s(db, sql);
-      if (!s.isValid()) {
-        IF_DEBUG_THEN Alert("Error - SQL Statement is not valid!");
-        return (INIT_FAILED);
-      }
-
-      int r = s.step();
-      if (r == SQLITE_OK)
-        IF_DEBUG_THEN Print("Notice - Step finished.");
-      else if (r == SQLITE_DONE)
-        IF_DEBUG_THEN Print("Notice - SQL query succeeded.");
-      else
-        IF_DEBUG_THEN Alert("Error - Failed to execute statement: ", db.getErrorMsg());
+      saveRecord(symbol, periods[i], T, O, H, L, C);
     }
     touchBlankFile(symbol, periods[i]);
   }
@@ -280,33 +258,7 @@ int saveHistoryIncrement(string symbol)
         if (fabs(cO - O) <= epsilon && fabs(cH - H) <= epsilon && fabs(cL - L) <= epsilon && fabs(cC - C) <= epsilon) break;
       }
       // Insert
-      string sql_ins = "INSERT OR REPLACE INTO `candles`(Symbol, Timeframe, "
-                       "Time, Open, High, Low, Close, Timezone) VALUES ('" +
-                       symbol + "','" +
-                       shortPeriodDescriptionFromConstant(periods[i]) + "'," + 
-                       IntegerToString(T) + "," +
-                       DoubleToString(O, Digits) + "," +
-                       DoubleToString(H, Digits) + "," +
-                       DoubleToString(L, Digits) + "," +
-                       DoubleToString(C, Digits) + ",'" +
-                       TimeZoneOffsetFromUTC + "');";
-      if (!Statement::isComplete(sql_ins)) {
-        IF_DEBUG_THEN Alert("Error - SQL Statement is not complete!");
-        return (INIT_FAILED);
-      }
-      Statement s_ins(db, sql_ins);
-      if (!s_ins.isValid()) {
-        IF_DEBUG_THEN Alert("Error - SQL Statement is not valid!");
-        return (INIT_FAILED);
-      }
-
-      int r_ins = s_ins.step();
-      if (r_ins == SQLITE_OK)
-        IF_DEBUG_THEN Print("Notice - Step finished.");
-      else if (r_ins == SQLITE_DONE)
-        IF_DEBUG_THEN Print("Notice - SQL query succeeded.");
-      else
-        IF_DEBUG_THEN Alert("Error - Failed to execute statement: ", db.getErrorMsg());
+      saveRecord(symbol, periods[i], T, O, H, L, C);
     }
     touchBlankFile(symbol, periods[i]);
   }
@@ -316,11 +268,63 @@ int saveHistoryIncrement(string symbol)
 //+------------------------------------------------------------------+
 //| touch blank file                                                 |
 //+------------------------------------------------------------------+
-int touchBlankFile(string symbol, int period)
+int saveRecord(string symbol, int period, double T, double O, double H, double L, double C)
 {
-  int handle = FileOpen(fileNameFromSymbolAndPeriod(symbol, period), FILE_CSV|FILE_WRITE, ',');
-  if (handle <= 0) return (INIT_FAILED);
-  FileWrite(handle, "");
-  FileClose(handle);
-  return (GetLastError());
+  string sql = "INSERT OR REPLACE INTO `candles`(Symbol, Timeframe, "
+               "Time, Open, High, Low, Close, Timezone) VALUES ('" +
+               symbol + "','" +
+               shortPeriodDescriptionFromConstant(period) + "'," + 
+               IntegerToString(T) + "," +
+               DoubleToString(O, Digits) + "," +
+               DoubleToString(H, Digits) + "," +
+               DoubleToString(L, Digits) + "," +
+               DoubleToString(C, Digits) + ",'" +
+               TimeZoneOffsetFromUTC + "');";
+  if (!Statement::isComplete(sql)) {
+    IF_DEBUG_THEN Alert("Error - SQL Statement is not complete!");
+    return (INIT_FAILED);
+  }
+  Statement s(db, sql);
+  if (!s.isValid()) {
+    IF_DEBUG_THEN Alert("Error - SQL Statement is not valid!");
+    return (INIT_FAILED);
+  }
+
+  int r = s.step();
+  if (r == SQLITE_OK) {
+    IF_DEBUG_THEN Print("Notice - Step finished.");
+    return (INIT_SUCCEEDED);
+  } else if (r == SQLITE_DONE) {
+    IF_DEBUG_THEN Print("Notice - SQL query succeeded.");
+    return (INIT_SUCCEEDED);
+  } else {
+    IF_DEBUG_THEN Alert("Error - Failed to execute statement: ", db.getErrorMsg());
+    return (INIT_FAILED);
+  }
+}
+
+bool doCheckTableExists(SQLite3 &db, string table)
+{
+  string sql = "SELECT name FROM sqlite_master WHERE type='table' AND name='" + table + "';";
+  if (!Statement::isComplete(sql)) {
+    IF_DEBUG_THEN Alert("Error - SQL Statement is not complete!");
+    return false;
+  }
+  Statement s(db, sql);
+  if (!s.isValid()) {
+    IF_DEBUG_THEN Alert("Error - SQL Statement is not valid!");
+    return false;
+  }
+
+  int r = s.step();
+  if (r != SQLITE_OK && r != SQLITE_DONE && r != SQLITE_ROW) {
+    IF_DEBUG_THEN Alert("Error - Failed to execute statement: ", db.getErrorMsg());
+    return false;
+  }
+
+  if (s.getDataCount() > 0) {
+    return true;
+  } else {
+    return false;
+  }
 }
