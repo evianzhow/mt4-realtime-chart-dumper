@@ -210,9 +210,15 @@ int saveHistory(string symbol)
 
       saveRecord(symbol, periods[i], T, O, H, L, C);
     }
-    touchBlankFile(symbol, periods[i]);
   }
-  return (GetLastError());
+  // First-run fix
+  int err = GetLastError();
+  if (err == 0) {
+    for (int i = 0; i < periodsCount; i++) {
+      touchBlankFile(symbol, periods[i]);
+    }
+  }
+  return err;
 }
 
 //+------------------------------------------------------------------+
