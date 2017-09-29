@@ -29,15 +29,15 @@ int periods[] = { PERIOD_H1, PERIOD_D1 };
 //+------------------------------------------------------------------+
 int maxBarsToRead (int period) {
   switch (period) {
-    case PERIOD_M1:  return (1000);
-    case PERIOD_M5:  return (1000);
-    case PERIOD_M15: return (1000);
-    case PERIOD_M30: return (1000);
-    case PERIOD_H1:  return (720);
-    case PERIOD_H4:  return (180);
-    case PERIOD_D1:  return (120);
-    case PERIOD_W1:  return (60);
-    case PERIOD_MN1: return (36);
+    case PERIOD_M1:  return (2048);
+    case PERIOD_M5:  return (2048);
+    case PERIOD_M15: return (2048);
+    case PERIOD_M30: return (2048);
+    case PERIOD_H1:  return (2048);
+    case PERIOD_H4:  return (2048);
+    case PERIOD_D1:  return (2048);
+    case PERIOD_W1:  return (200);
+    case PERIOD_MN1: return (100);
   }
       
   return (0);
